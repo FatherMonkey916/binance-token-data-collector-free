@@ -7,22 +7,37 @@ from datetime import datetime
 MONGODB_URI = "mongodb+srv://alertdb:NzRoML9MhR3sSKjM@cluster0.iittg.mongodb.net/alert3"
 client = pymongo.MongoClient(MONGODB_URI)
 db = client["alert3"]
-collection = db["price_data_15k"]
 
 # Binance API Endpoint for Klines
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
 
 # Parameters
-SYMBOL = "SOLUSDT"
+TOKENS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT"]
 INTERVAL = "1m"
 LIMIT = 1000  # Max allowed per request
-TOTAL_RECORDS = 15000  # Total required records
+TOTAL_RECORDS = 15000  # Maintain only the latest 3000 records per token
 SLEEP_TIME = 1  # Sleep time to avoid API rate limits
 
-def fetch_price_data(start_time, end_time):
-    """Fetch historical SOL price data using startTime and endTime"""
+def create_time_series_collection():
+    """Create time series collections for each token if they don't exist."""
+    for token in TOKENS:
+        collection_name = f"{token}_timeseries"
+
+        if collection_name not in db.list_collection_names():
+            db.create_collection(
+                collection_name,
+                timeseries={
+                    "timeField": "timestamp",
+                    "metaField": "token",
+                    "granularity": "minutes"
+                }
+            )
+            print(f"Created time series collection: {collection_name}")
+
+def fetch_price_data(symbol, start_time, end_time):
+    """Fetch historical price data using startTime and endTime"""
     params = {
-        "symbol": SYMBOL,
+        "symbol": symbol,
         "interval": INTERVAL,
         "limit": LIMIT,
         "startTime": start_time,
@@ -32,80 +47,98 @@ def fetch_price_data(start_time, end_time):
     data = response.json()
     return data if isinstance(data, list) else []
 
-def save_to_mongodb(data):
-    """Save price data to MongoDB"""
+def save_to_mongodb(collection, data, token):
+    """Save price data to MongoDB time series collection and ensure size limit."""
     if not data:
         return
     
     records = [
         {
-            "token": "SOL",
+            "token": token,
             "price": float(entry[4]),  # Closing price
             "timestamp": datetime.utcfromtimestamp(entry[0] / 1000)
         }
         for entry in data
     ]
-    
+
     collection.insert_many(records)
-    print(f"Saved {len(records)} records to MongoDB")
+    print(f"Saved {len(records)} records to {collection.name}")
+    
+    # Maintain only the latest 3000 records
+    delete_oldest_records(collection)
+
+def delete_oldest_records(collection):
+    """Ensure that only the latest 3000 records are kept."""
+    record_count = collection.count_documents({})
+    if record_count > TOTAL_RECORDS:
+        excess = record_count - TOTAL_RECORDS
+        oldest_records = collection.find({}, {"_id": 1}).sort("timestamp", 1).limit(excess)
+        ids_to_delete = [record["_id"] for record in oldest_records]
+        collection.delete_many({"_id": {"$in": ids_to_delete}})
+        print(f"Deleted {excess} old records from {collection.name}")
 
 def fetch_initial_data():
-    """Fetch initial 15,000 records using startTime and endTime"""
-    end_time = int(time.time() * 1000)  # Current timestamp in milliseconds
-    fetched = 0
+    """Fetch initial 3000 records for each token"""
+    for token in TOKENS:
+        collection = db[f"{token}_timeseries"]
+        end_time = int(time.time() * 1000)  # Current timestamp in milliseconds
+        fetched = 0
 
-    if collection.count_documents({}) >= TOTAL_RECORDS:
-        print("Database already has 15,000 records. Skipping initial fetch.")
-        return
-
-    while fetched < TOTAL_RECORDS:
-        start_time = end_time - (LIMIT * 60 * 1000)  # Move back LIMIT minutes
-        price_data = fetch_price_data(start_time, end_time)
-        
-        if not price_data:
-            print("No data returned, retrying...")
-            time.sleep(5)
+        if collection.count_documents({}) >= TOTAL_RECORDS:
+            print(f"Database already has {TOTAL_RECORDS} records for {token}. Skipping initial fetch.")
             continue
-        
-        save_to_mongodb(price_data)
-        fetched += len(price_data)
-        end_time = int(price_data[0][0]) - 1  # Update end_time for older data
-        print(f"Total records saved: {fetched}/{TOTAL_RECORDS}")
-        time.sleep(SLEEP_TIME)
+
+        while fetched < TOTAL_RECORDS:
+            start_time = end_time - (LIMIT * 60 * 1000)  # Move back LIMIT minutes
+            price_data = fetch_price_data(token, start_time, end_time)
+            
+            if not price_data:
+                print(f"No data returned for {token}, retrying...")
+                time.sleep(5)
+                continue
+            
+            save_to_mongodb(collection, price_data, token)
+            fetched += len(price_data)
+            end_time = int(price_data[0][0]) - 1  # Update end_time for older data
+            print(f"Total records saved for {token}: {fetched}/{TOTAL_RECORDS}")
+            time.sleep(SLEEP_TIME)
 
 def live_update():
-    """Continuously update MongoDB by adding new record and removing oldest"""
+    """Continuously update MongoDB for all tokens and maintain record limit."""
     while True:
-        end_time = int(time.time() * 1000)
-        start_time = end_time - (60 * 1000)  # Fetch only last 1-minute data
-        price_data = fetch_price_data(start_time, end_time)
+        for token in TOKENS:
+            collection = db[f"{token}_timeseries"]
+            end_time = int(time.time() * 1000)
+            start_time = end_time - (60 * 1000)  # Fetch only last 1-minute data
+            price_data = fetch_price_data(token, start_time, end_time)
+            
+            if not price_data:
+                print(f"No new data available for {token}, retrying...")
+                time.sleep(1)  # Reduce sleep time to avoid missing data
+                continue
+
+            # Insert new record
+            new_record = {
+                "token": token,
+                "price": float(price_data[0][4]),  # Closing price
+                "timestamp": datetime.utcfromtimestamp(price_data[0][0] / 1000)
+            }
+            collection.insert_one(new_record)
+            print(f"Added new record for {token}: {new_record}")
+            
+            # Ensure only 3000 records are kept
+            delete_oldest_records(collection)
+            time.sleep(SLEEP_TIME)  # Reduce sleep to balance API requests
         
-        if not price_data:
-            print("No new data available, retrying...")
-            time.sleep(60)
-            continue
-
-        # Insert new record
-        new_record = {
-            "token": "SOL",
-            "price": float(price_data[0][4]),  # Closing price
-            "timestamp": datetime.utcfromtimestamp(price_data[0][0] / 1000)
-        }
-        collection.insert_one(new_record)
-        print(f"Added new record: {new_record}")
-
-        # Remove oldest record if size exceeds 15,000
-        if collection.count_documents({}) > TOTAL_RECORDS:
-            oldest_record = collection.find_one(sort=[("timestamp", pymongo.ASCENDING)])
-            collection.delete_one({"_id": oldest_record["_id"]})
-            print(f"Removed oldest record: {oldest_record}")
-
-        time.sleep(60)  # Run every minute
+        time.sleep(60 - (SLEEP_TIME * len(TOKENS)))  # Ensure balanced API calls
 
 if __name__ == "__main__":
     try:
         client.admin.command('ping')
         print("Pinged your deployment. Successfully connected to MongoDB!")
+
+        # Create time series collections if not exist
+        create_time_series_collection()
 
         # Fetch initial data if not already fetched
         fetch_initial_data()
