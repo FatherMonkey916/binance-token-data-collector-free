@@ -15,7 +15,7 @@ BINANCE_URL = "https://api.binance.com/api/v3/klines"
 TOKENS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT"]
 INTERVAL = "1m"
 LIMIT = 1000  # Max allowed per request
-TOTAL_RECORDS = 3000  # Maintain only the latest 3000 records per token
+TOTAL_RECORDS = 15000  # Maintain only the latest 3000 records per token
 SLEEP_TIME = 1  # Sleep time to avoid API rate limits
 RETENTION_SECONDS = None  # We will manage retention manually
 
