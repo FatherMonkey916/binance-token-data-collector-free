@@ -15,8 +15,8 @@ BINANCE_URL = "https://api.binance.com/api/v3/klines"
 TOKENS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT"]
 INTERVAL = "1m"
 LIMIT = 1000  # Max allowed per request
-TOTAL_RECORDS = 15000  # Maintain only the latest 3000 records per token
-SLEEP_TIME = 1  # Sleep time to avoid API rate limits
+TOTAL_RECORDS = 15000  # Maintain only the latest 15000 records per token
+SLEEP_TIME = 2  # Sleep time to avoid API rate limits
 
 def create_time_series_collection():
     """Create time series collections for each token if they don't exist."""
@@ -56,7 +56,7 @@ def save_to_mongodb(collection, data, token):
         {
             "token": token,
             "price": float(entry[4]),  # Closing price
-            "timestamp": datetime.utcfromtimestamp(entry[0] / 1000)
+            "timestamp": datetime.fromtimestamp(entry[0] / 1000, datetime.timezone.utc)
         }
         for entry in data
     ]
@@ -64,11 +64,11 @@ def save_to_mongodb(collection, data, token):
     collection.insert_many(records)
     print(f"Saved {len(records)} records to {collection.name}")
     
-    # Maintain only the latest 3000 records
+    # Maintain only the latest 15000 records
     delete_oldest_records(collection)
 
 def delete_oldest_records(collection):
-    """Ensure that only the latest 3000 records are kept."""
+    """Ensure that only the latest 15000 records are kept."""
     record_count = collection.count_documents({})
     if record_count > TOTAL_RECORDS:
         excess = record_count - TOTAL_RECORDS
@@ -78,7 +78,7 @@ def delete_oldest_records(collection):
         print(f"Deleted {excess} old records from {collection.name}")
 
 def fetch_initial_data():
-    """Fetch initial 3000 records for each token"""
+    """Fetch initial 15000 records for each token"""
     for token in TOKENS:
         collection = db[f"{token}_timeseries"]
         end_time = int(time.time() * 1000)  # Current timestamp in milliseconds
@@ -121,12 +121,12 @@ def live_update():
             new_record = {
                 "token": token,
                 "price": float(price_data[0][4]),  # Closing price
-                "timestamp": datetime.utcfromtimestamp(price_data[0][0] / 1000)
+                "timestamp": datetime.fromtimestamp(price_data[0][0] / 1000, datetime.timezone.utc)
             }
             collection.insert_one(new_record)
             print(f"Added new record for {token}: {new_record}")
             
-            # Ensure only 3000 records are kept
+            # Ensure only 15000 records are kept
             delete_oldest_records(collection)
             time.sleep(SLEEP_TIME)  # Reduce sleep to balance API requests
         
