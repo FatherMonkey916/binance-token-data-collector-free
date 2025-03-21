@@ -1,7 +1,7 @@
 import requests
 import time
 import pymongo
-from datetime import datetime
+from datetime import datetime, timezone
 
 # MongoDB Connection
 MONGODB_URI = "mongodb+srv://alertdb:NzRoML9MhR3sSKjM@cluster0.iittg.mongodb.net/alert3"
@@ -56,7 +56,7 @@ def save_to_mongodb(collection, data, token):
         {
             "token": token,
             "price": float(entry[4]),  # Closing price
-            "timestamp": datetime.fromtimestamp(entry[0] / 1000, datetime.timezone.utc)
+            "timestamp": datetime.fromtimestamp(entry[0] / 1000, timezone.utc)
         }
         for entry in data
     ]
@@ -121,7 +121,7 @@ def live_update():
             new_record = {
                 "token": token,
                 "price": float(price_data[0][4]),  # Closing price
-                "timestamp": datetime.fromtimestamp(price_data[0][0] / 1000, datetime.timezone.utc)
+                "timestamp": datetime.fromtimestamp(price_data[0][0] / 1000, timezone.utc)
             }
             collection.insert_one(new_record)
             print(f"Added new record for {token}: {new_record}")
