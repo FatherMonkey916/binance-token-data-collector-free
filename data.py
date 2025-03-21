@@ -17,7 +17,6 @@ INTERVAL = "1m"
 LIMIT = 1000  # Max allowed per request
 TOTAL_RECORDS = 15000  # Maintain only the latest 3000 records per token
 SLEEP_TIME = 1  # Sleep time to avoid API rate limits
-RETENTION_SECONDS = None  # We will manage retention manually
 
 def create_time_series_collection():
     """Create time series collections for each token if they don't exist."""
